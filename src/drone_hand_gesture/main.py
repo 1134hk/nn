@@ -199,6 +199,9 @@ class IntegratedDroneSimulation:
         # 初始化摄像头
         self.cap = self._initialize_camera()
 
+        # 镜像设置
+        self.mirror_mode = True  # 默认开启镜像
+
         # 数据记录
         self.data_log = []
         self.log_file = "flight_log.json"
@@ -285,7 +288,9 @@ class IntegratedDroneSimulation:
             if self.cap and self.cap.isOpened():
                 ret, frame = self.cap.read()
                 if ret:
-                    frame = cv2.flip(frame, 1)  # 镜像，更自然
+                    # 镜像模式切换
+                    if self.mirror_mode:
+                        frame = cv2.flip(frame, 1)  # 左右镜像
                 else:
                     # 创建虚拟帧
                     frame = np.ones((480, 640, 3), dtype=np.uint8) * 255
@@ -578,6 +583,7 @@ class IntegratedDroneSimulation:
         controls = [
             "Q/ESC: Exit",
             "C: Switch Camera",
+            "I: Mirror On/Off",
             "D: Debug Info",
             "H: Help",
             "F: Fullscreen",
@@ -597,11 +603,18 @@ class IntegratedDroneSimulation:
         current_time = time.time()
         if hasattr(self, 'last_frame_time'):
             fps = 1.0 / (current_time - self.last_frame_time)
-            cv2.putText(enhanced_frame, f"FPS: {fps:.1f}", 
+            cv2.putText(enhanced_frame, f"FPS: {fps:.1f}",
                         (width + 20, height - 20),
                         cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1)
         self.last_frame_time = current_time
-        
+
+        # 显示镜像模式状态
+        mirror_text = "MIRROR: ON" if self.mirror_mode else "MIRROR: OFF"
+        mirror_color = (0, 255, 0) if self.mirror_mode else (0, 0, 255)
+        cv2.putText(enhanced_frame, mirror_text,
+                    (width + 20, height - 40),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.5, mirror_color, 1)
+
         return enhanced_frame
 
     def _show_help(self):
@@ -652,6 +665,7 @@ class IntegratedDroneSimulation:
         print("键盘控制:")
         print("  Q/ESC - 退出")
         print("  C - 切换摄像头")
+        print("  I - 切换镜像模式")
         print("  D - 显示调试信息")
         print("  H - 显示帮助")
         print("  F - 切换全屏")
@@ -1171,6 +1185,7 @@ class IntegratedDroneSimulation:
         print("使用说明:")
         print("  手势控制窗口: 按 'q' 退出")
         print("  手势控制窗口: 按 'c' 切换摄像头")
+        print("  手势控制窗口: 按 'i' 切换镜像模式")
         print("  手势控制窗口: 按 'd' 显示调试信息")
         print("  手势控制窗口: 按 'm' 切换单手/双手模式")
         print("  3D仿真窗口: 按 'ESC' 退出")
