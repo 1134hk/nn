@@ -38,6 +38,7 @@ except (ImportError, AttributeError) as e:
 
 from drone_controller import DroneController
 from simulation_3d import Drone3DViewer
+from multi_drone_controller import MultiDroneController, DroneFormation
 
 # 注意：physics_engine.py 是可选的，如果没有可以先注释掉
 try:
@@ -129,13 +130,35 @@ class IntegratedDroneSimulation:
             self.gesture_detector = GestureDetector()
 
         print("正在初始化无人机控制器...")
-        self.drone_controller = DroneController(simulation_mode=True)
+        # 检查是否启用多无人机模式
+        self.multi_drone_enabled = self.config.get('multi_drone_enabled', False)
+        self.num_drones = self.config.get('num_drones', 2)
+
+        if self.multi_drone_enabled:
+            print(f"[OK] 启用多无人机模式: {self.num_drones} 架无人机")
+            self.multi_drone_controller = MultiDroneController(
+                num_drones=self.num_drones,
+                config=None,
+                simulation_mode=True
+            )
+            self.formation = DroneFormation(self.multi_drone_controller)
+            # 默认使用 dual 控制模式
+            self.multi_drone_controller.set_control_mode("dual")
+            self.drone_controller = self.multi_drone_controller.get_drone(0)  # 保持兼容性
+        else:
+            self.multi_drone_controller = None
+            self.formation = None
+            self.drone_controller = DroneController(simulation_mode=True)
 
         print("正在初始化3D仿真显示...")
         self.viewer = Drone3DViewer(
             width=self.config.get('window_width', 1024),
             height=self.config.get('window_height', 768)
         )
+
+        # 设置多无人机渲染模式
+        if self.multi_drone_enabled:
+            self.viewer.set_multi_drone_mode(True)
 
         # 初始化物理引擎（可选）
         if HAS_PHYSICS_ENGINE:
