@@ -1,0 +1,37 @@
+{
+  "drone": {
+    "max_speed": 2.0,
+    "max_altitude": 10.0,
+    "takeoff_altitude": 2.0,
+    "hover_threshold": 0.1,
+    "battery_drain_rate": 0.01,
+    "mass": 1.0,
+    "gravity": 9.81
+  },
+  "camera": {
+    "default_id": 1,
+    "width": 640,
+    "height": 480,
+    "fps": 30
+  },
+  "gesture": {
+    "threshold": 0.6,
+    "command_cooldown": 1.5,
+    "use_ml": true
+  },
+  "simulation": {
+    "window_width": 1024,
+    "window_height": 768,
+    "target_fps": 60,
+    "max_trajectory_points": 500
+  },
+  "airsim": {
+    "ip_address": "127.0.0.1",
+    "port": 41451,
+    "vehicle_name": ""
+  },
+  "logging": {
+    "level": "INFO",
+    "log_dir": "logs"
+  }
+}

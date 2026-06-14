@@ -39,6 +39,7 @@ except (ImportError, AttributeError) as e:
 from drone_controller import DroneController
 from simulation_3d import Drone3DViewer
 from multi_drone_controller import MultiDroneController, DroneFormation
+from mission_manager import MissionManager, MissionType, MissionStatus
 
 # 注意：physics_engine.py 是可选的，如果没有可以先注释掉
 try:
@@ -224,6 +225,11 @@ class IntegratedDroneSimulation:
 
         # 镜像设置
         self.mirror_mode = True  # 默认开启镜像
+
+        # 初始化飞行任务管理器
+        self.mission_manager = MissionManager()
+        self.mission_active = False
+        self._last_collision_check = 0.0
 
         # 数据记录
         self.data_log = []
@@ -597,6 +603,37 @@ class IntegratedDroneSimulation:
                     cv2.FONT_HERSHEY_SIMPLEX, 0.5, (150, 255, 150), 1)
         y_offset += 30
         
+        # 显示任务信息
+        mission_info = self.mission_manager.get_mission_info()
+        if mission_info['mission_type'] != 'none':
+            cv2.putText(enhanced_frame, "MISSION STATUS",
+                        (width + 20, y_offset),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 255), 1)
+            y_offset += 25
+            cv2.putText(enhanced_frame, f"Task: {mission_info['mission_name']}",
+                        (width + 20, y_offset),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.45, (255, 255, 0), 1)
+            y_offset += 15
+            cv2.putText(enhanced_frame, f"Status: {mission_info['status']}",
+                        (width + 20, y_offset),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.45, (200, 200, 200), 1)
+            y_offset += 15
+            if mission_info['progress']:
+                cv2.putText(enhanced_frame, f"Progress: {mission_info['progress']}",
+                            (width + 20, y_offset),
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.45, (0, 255, 0), 1)
+                y_offset += 15
+            cv2.putText(enhanced_frame, f"Time: {mission_info['elapsed']:.1f}s",
+                        (width + 20, y_offset),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.45, (200, 200, 200), 1)
+            y_offset += 15
+            if mission_info['score'] > 0:
+                cv2.putText(enhanced_frame, f"Score: {mission_info['score']:.0f} | {mission_info['grade']}",
+                            (width + 20, y_offset),
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.45, (0, 255, 0), 1)
+                y_offset += 15
+            y_offset += 10
+
         # 显示控制提示
         cv2.putText(enhanced_frame, "CONTROLS", 
                     (width + 20, y_offset),
@@ -611,6 +648,9 @@ class IntegratedDroneSimulation:
             "H: Help",
             "F: Fullscreen",
             "M: Toggle Mode",
+            "1/2/3: Mission Select",
+            "0: Cancel Mission",
+            "P: Mission History",
             "[ : Lower Sensitivity",
             "] : Raise Sensitivity",
             "= : Reset Sensitivity"
@@ -700,6 +740,12 @@ class IntegratedDroneSimulation:
         print("  T - 手动起飞")
         print("  L - 手动降落")
         print("  S - 停止")
+        print("飞行任务 (3D窗口):")
+        print("  1 - 穿越门框")
+        print("  2 - 定点降落")
+        print("  3 - 环绕飞行")
+        print("  0 - 取消任务")
+        print("  P - 任务历史")
         print("=" * 60)
         print()
         print("灵敏度说明:")
@@ -1054,6 +1100,47 @@ class IntegratedDroneSimulation:
                     self.drone_controller.send_command("hover")
                     self._last_key_press['h'] = current_time
 
+            # 检查任务模式按键
+            # 1 键 - 穿越门框任务
+            if keys[pygame.K_1]:
+                if ('1' not in self._last_key_press or
+                        current_time - self._last_key_press['1'] > 1.0):
+                    self._start_mission(MissionType.GATE_PASS)
+                    self._last_key_press['1'] = current_time
+
+            # 2 键 - 定点降落任务
+            if keys[pygame.K_2]:
+                if ('2' not in self._last_key_press or
+                        current_time - self._last_key_press['2'] > 1.0):
+                    self._start_mission(MissionType.PRECISION_LAND)
+                    self._last_key_press['2'] = current_time
+
+            # 3 键 - 环绕飞行任务
+            if keys[pygame.K_3]:
+                if ('3' not in self._last_key_press or
+                        current_time - self._last_key_press['3'] > 1.0):
+                    self._start_mission(MissionType.ORBIT)
+                    self._last_key_press['3'] = current_time
+
+            # 0 键 - 取消/结束任务
+            if keys[pygame.K_0]:
+                if ('0' not in self._last_key_press or
+                        current_time - self._last_key_press['0'] > 1.0):
+                    if self.mission_manager.status == MissionStatus.RUNNING:
+                        self.mission_manager.cancel_mission()
+                        print("[INFO] 任务已取消")
+                    elif self.mission_manager.status == MissionStatus.COMPLETED:
+                        self.mission_manager.cancel_mission()
+                        print("[INFO] 已清除任务，可开始新任务")
+                    self._last_key_press['0'] = current_time
+
+            # P 键 - 打印任务历史
+            if keys[pygame.K_p]:
+                if ('p' not in self._last_key_press or
+                        current_time - self._last_key_press['p'] > 1.0):
+                    print(self.mission_manager.get_history_summary())
+                    self._last_key_press['p'] = current_time
+
             # 检查停止键 S
             if keys[pygame.K_s]:
                 if ('s' not in self._last_key_press or
@@ -1072,6 +1159,18 @@ class IntegratedDroneSimulation:
             drone_state = self.drone_controller.get_state()
             self.drone_controller.update_physics(dt)
 
+            # 更新飞行任务
+            drone_pos = drone_state.get('position', np.array([0.0, 0.0, 0.0]))
+            if self.mission_manager.status == MissionStatus.RUNNING:
+                self.mission_manager.update(drone_pos, dt)
+                # 碰撞检测
+                if current_time - self._last_collision_check > 0.5:
+                    if self.mission_manager.check_collision(drone_pos):
+                        if self.mission_manager.result:
+                            self.mission_manager.result.collision_count += 1
+                            print(f"[WARNING] 碰撞! 碰撞次数: {self.mission_manager.result.collision_count}")
+                    self._last_collision_check = current_time
+
             if self.physics_engine and self.drone_controller.state['armed']:
                 control_input = self._get_control_input_from_state(drone_state)
                 physics_state = self.physics_engine.update(dt, control_input)
@@ -1083,7 +1182,11 @@ class IntegratedDroneSimulation:
                 drone_state_with_gesture['current_gesture'] = self.current_gesture
                 drone_state_with_gesture['gesture_confidence'] = self.gesture_confidence
 
-            self.viewer.render(drone_state_with_gesture, trajectory)
+            # 收集任务元素供3D渲染
+            mission_elements = self._get_mission_elements()
+
+            self.viewer.render(drone_state_with_gesture, trajectory,
+                               mission_elements=mission_elements)
 
             # 控制帧率，避免CPU占用过高
             elapsed = time.time() - start_time
@@ -1121,6 +1224,31 @@ class IntegratedDroneSimulation:
 
         return control_input
 
+    def _start_mission(self, mission_type: MissionType):
+        """开始飞行任务"""
+        if self.mission_manager.status == MissionStatus.RUNNING:
+            print(f"[WARNING] 已有任务运行中 ({self.mission_manager._get_mission_name(self.mission_manager.current_mission)})，按 0 取消当前任务")
+            return
+
+        print(f"\n[INFO] 准备开始任务...")
+        success = self.mission_manager.start_mission(mission_type)
+        if success:
+            self.mission_active = True
+
+    def _get_mission_elements(self):
+        """获取任务元素供3D渲染"""
+        elements = {}
+        mission_info = self.mission_manager.get_mission_info()
+
+        if mission_info['mission_type'] == 'none':
+            return None
+
+        elements['gates'] = self.mission_manager.get_gates()
+        elements['landing_pad'] = self.mission_manager.get_landing_pad()
+        elements['orbit_target'] = self.mission_manager.get_orbit_target()
+
+        return elements if any(v for v in elements.values()) else None
+
     def _log_command(self, gesture, command, confidence, intensity):
         """记录命令到日志"""
         log_entry = {
@@ -1156,7 +1284,7 @@ class IntegratedDroneSimulation:
     def run(self):
         """运行主程序"""
         print("=" * 60)
-        print("     手势控制无人机仿真系统（机器学习增强版）")
+        print("     手势控制无人机仿真系统（含飞行任务模式）")
         print("=" * 60)
 
         # 显示当前检测模式
@@ -1182,7 +1310,17 @@ class IntegratedDroneSimulation:
         print("  4. 无人机控制仿真")
         print("  5. 3D可视化 (OpenGL渲染)")
         print("  6. 飞行数据记录")
+        print("  7. 飞行任务模式 (穿越门框/定点降落/环绕飞行)")
         print("=" * 60)
+        print("【飞行任务模式】NEW!")
+        print("-" * 40)
+        print("  3D窗口按键:")
+        print("    1 - 穿越门框任务 (依次穿过3个门框)")
+        print("    2 - 定点降落任务 (精准降落到绿色平台)")
+        print("    3 - 环绕飞行任务 (围绕目标点飞行2圈)")
+        print("    0 - 取消/清除当前任务")
+        print("    P - 查看任务历史记录")
+        print("-" * 40)
         print("【双手控制模式】(默认)")
         print("-" * 40)
         print("左手控制方向:")
@@ -1216,6 +1354,9 @@ class IntegratedDroneSimulation:
         print("    G - 切换网格显示")
         print("    T - 切换轨迹显示")
         print("    A - 切换坐标轴显示")
+        print("    1/2/3 - 选择飞行任务")
+        print("    0 - 取消任务")
+        print("    P - 任务历史")
         print("    ↑↓←→ - 旋转视角")
         print("    +/- - 缩放视角")
         print("    空格 - 重置视角")

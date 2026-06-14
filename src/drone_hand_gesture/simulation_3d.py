@@ -70,7 +70,8 @@ class Drone3DViewer:
                   0, 0, 0,  # 观察点
                   0, 1, 0)  # 上方向
 
-    def render(self, drone_state=None, trajectory=None, all_drones_state=None, all_trajectories=None):
+    def render(self, drone_state=None, trajectory=None, all_drones_state=None, all_trajectories=None,
+               mission_elements=None):
         """
         渲染整个场景
 
@@ -79,6 +80,7 @@ class Drone3DViewer:
             trajectory: 单无人机轨迹（向后兼容）
             all_drones_state: 多无人机状态列表
             all_trajectories: 多无人机轨迹列表
+            mission_elements: 任务元素 {'gates': [], 'landing_pad': obj, 'orbit_target': obj}
         """
         # 清除缓冲区
         glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT)
@@ -93,6 +95,10 @@ class Drone3DViewer:
 
         if self.show_axes:
             self._draw_coordinate_axes()
+
+        # 绘制任务元素
+        if mission_elements:
+            self._draw_mission_elements(mission_elements)
 
         # 多无人机模式
         if self.multi_drone_mode and all_drones_state:
@@ -280,6 +286,233 @@ class Drone3DViewer:
         """绘制默认覆盖层（无状态数据时）"""
         # 暂时禁用文本绘制，只保留3D场景渲染
         pass
+
+    # ============ 任务元素绘制 ============
+
+    def _draw_mission_elements(self, mission_elements):
+        """绘制所有任务相关元素"""
+        # 绘制门框
+        gates = mission_elements.get('gates', [])
+        for gate in gates:
+            self._draw_gate(gate)
+
+        # 绘制降落平台
+        landing_pad = mission_elements.get('landing_pad')
+        if landing_pad is not None:
+            self._draw_landing_pad(landing_pad)
+
+        # 绘制环绕目标
+        orbit_target = mission_elements.get('orbit_target')
+        if orbit_target is not None:
+            self._draw_orbit_target(orbit_target)
+
+    def _draw_gate(self, gate):
+        """绘制穿越门框"""
+        x, y, z = gate.position
+        w, h = gate.width, gate.height
+        rotation = gate.rotation
+
+        glPushMatrix()
+        glTranslatef(x, y, z)
+        glRotatef(np.degrees(rotation), 0, 1, 0)
+
+        # 门框颜色（金色，未通过时闪烁效果）
+        import time
+        if not gate.passed:
+            alpha = 0.5 + 0.5 * np.sin(time.time() * 3)
+            glColor4f(*gate.color, alpha)
+        else:
+            glColor4f(0.0, 1.0, 0.0, 0.6)  # 通过后变绿
+
+        glEnable(GL_BLEND)
+        glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA)
+
+        # 绘制门框的四个边
+        frame_thickness = 0.08
+        half_w = w / 2
+        half_h = h / 2
+
+        # 左边框
+        self._draw_box(-half_w, 0, -frame_thickness/2, frame_thickness, h, frame_thickness)
+        # 右边框
+        self._draw_box(half_w, 0, -frame_thickness/2, frame_thickness, h, frame_thickness)
+        # 上边框
+        self._draw_box(0, half_h, -frame_thickness/2, w, frame_thickness, frame_thickness)
+        # 下边框
+        self._draw_box(0, -half_h, -frame_thickness/2, w, frame_thickness, frame_thickness)
+
+        glDisable(GL_BLEND)
+        glPopMatrix()
+
+    def _draw_box(self, cx, cy, cz, w, h, d):
+        """绘制一个矩形框（中心位置+尺寸）"""
+        half_w, half_h, half_d = w/2, h/2, d/2
+        glBegin(GL_QUADS)
+        # 前面
+        glVertex3f(cx-half_w, cy-half_h, cz+half_d)
+        glVertex3f(cx+half_w, cy-half_h, cz+half_d)
+        glVertex3f(cx+half_w, cy+half_h, cz+half_d)
+        glVertex3f(cx-half_w, cy+half_h, cz+half_d)
+        # 后面
+        glVertex3f(cx-half_w, cy-half_h, cz-half_d)
+        glVertex3f(cx-half_w, cy+half_h, cz-half_d)
+        glVertex3f(cx+half_w, cy+half_h, cz-half_d)
+        glVertex3f(cx+half_w, cy-half_h, cz-half_d)
+        # 上面
+        glVertex3f(cx-half_w, cy+half_h, cz+half_d)
+        glVertex3f(cx+half_w, cy+half_h, cz+half_d)
+        glVertex3f(cx+half_w, cy+half_h, cz-half_d)
+        glVertex3f(cx-half_w, cy+half_h, cz-half_d)
+        # 下面
+        glVertex3f(cx-half_w, cy-half_h, cz+half_d)
+        glVertex3f(cx-half_w, cy-half_h, cz-half_d)
+        glVertex3f(cx+half_w, cy-half_h, cz-half_d)
+        glVertex3f(cx+half_w, cy-half_h, cz+half_d)
+        # 右面
+        glVertex3f(cx+half_w, cy-half_h, cz+half_d)
+        glVertex3f(cx+half_w, cy-half_h, cz-half_d)
+        glVertex3f(cx+half_w, cy+half_h, cz-half_d)
+        glVertex3f(cx+half_w, cy+half_h, cz+half_d)
+        # 左面
+        glVertex3f(cx-half_w, cy-half_h, cz+half_d)
+        glVertex3f(cx-half_w, cy+half_h, cz+half_d)
+        glVertex3f(cx-half_w, cy+half_h, cz-half_d)
+        glVertex3f(cx-half_w, cy-half_h, cz-half_d)
+        glEnd()
+
+    def _draw_landing_pad(self, landing_pad):
+        """绘制降落平台"""
+        x, y, z = landing_pad.position
+        r = landing_pad.radius
+
+        glPushMatrix()
+        glTranslatef(x, y, z)
+
+        # 绘制圆形平台
+        glEnable(GL_BLEND)
+        glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA)
+
+        if landing_pad.landed:
+            glColor4f(0.0, 1.0, 0.0, 0.7)  # 已降落 - 绿色
+        else:
+            glColor4f(0.0, 0.8, 0.2, 0.5)  # 未降落 - 绿色半透明
+
+        # 绘制平台主体
+        slices = 32
+        # 顶面
+        glBegin(GL_TRIANGLE_FAN)
+        glVertex3f(0, 0.05, 0)
+        for i in range(slices + 1):
+            angle = 2 * np.pi * i / slices
+            glVertex3f(np.cos(angle) * r, 0.05, np.sin(angle) * r)
+        glEnd()
+
+        # 底面
+        glBegin(GL_TRIANGLE_FAN)
+        glVertex3f(0, 0, 0)
+        for i in range(slices, -1, -1):
+            angle = 2 * np.pi * i / slices
+            glVertex3f(np.cos(angle) * r, 0, np.sin(angle) * r)
+        glEnd()
+
+        # 侧面
+        glBegin(GL_QUAD_STRIP)
+        for i in range(slices + 1):
+            angle = 2 * np.pi * i / slices
+            x = np.cos(angle) * r
+            z = np.sin(angle) * r
+            glVertex3f(x, 0.05, z)
+            glVertex3f(x, 0, z)
+        glEnd()
+
+        # 绘制同心圆标记（靶心）
+        glColor4f(1.0, 1.0, 1.0, 0.4)
+        for ring_r in [r * 0.33, r * 0.66]:
+            glBegin(GL_LINE_LOOP)
+            for i in range(slices):
+                angle = 2 * np.pi * i / slices
+                glVertex3f(np.cos(angle) * ring_r, 0.06, np.sin(angle) * ring_r)
+            glEnd()
+
+        # 中心十字
+        glColor4f(1.0, 0.0, 0.0, 0.6)
+        glBegin(GL_LINES)
+        glVertex3f(-r * 0.15, 0.06, 0)
+        glVertex3f(r * 0.15, 0.06, 0)
+        glVertex3f(0, 0.06, -r * 0.15)
+        glVertex3f(0, 0.06, r * 0.15)
+        glEnd()
+
+        glDisable(GL_BLEND)
+        glPopMatrix()
+
+    def _draw_orbit_target(self, orbit_target):
+        """绘制环绕飞行目标点"""
+        x, y, z = orbit_target.position
+        radius = orbit_target.radius
+
+        glPushMatrix()
+        glTranslatef(x, y, z)
+
+        # 绘制目标柱体
+        glColor3f(*orbit_target.color)
+        self._draw_cylinder(0.2, 4.0)
+
+        # 绘制顶部球体
+        glColor3f(1.0, 0.8, 0.0)
+        self._draw_sphere(0.4, 16)
+
+        # 绘制环绕轨道圈（虚线圆）
+        glEnable(GL_BLEND)
+        glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA)
+
+        completed = orbit_target.completed_laps
+        total = orbit_target.total_laps
+        progress = completed / total if total > 0 else 0
+
+        glColor4f(1.0, 1.0, 1.0, 0.3)
+        glBegin(GL_LINE_LOOP)
+        slices = 64
+        for i in range(slices):
+            angle = 2 * np.pi * i / slices
+            glVertex3f(np.cos(angle) * radius, 0, np.sin(angle) * radius)
+        glEnd()
+
+        # 绘制进度弧线
+        if progress > 0:
+            glColor4f(0.0, 1.0, 0.5, 0.8)
+            glLineWidth(2.0)
+            glBegin(GL_LINE_STRIP)
+            arc_slices = int(slices * min(progress, 1.0))
+            for i in range(arc_slices + 1):
+                angle = 2 * np.pi * i / slices
+                glVertex3f(np.cos(angle) * radius, 0, np.sin(angle) * radius)
+            glEnd()
+            glLineWidth(1.0)
+
+        glDisable(GL_BLEND)
+        glPopMatrix()
+
+    def _draw_sphere(self, radius, slices=16, stacks=16):
+        """绘制球体"""
+        for i in range(stacks):
+            lat0 = np.pi * (-0.5 + i / stacks)
+            lat1 = np.pi * (-0.5 + (i + 1) / stacks)
+            z0 = np.sin(lat0) * radius
+            z1 = np.sin(lat1) * radius
+            r0 = np.cos(lat0) * radius
+            r1 = np.cos(lat1) * radius
+
+            glBegin(GL_QUAD_STRIP)
+            for j in range(slices + 1):
+                lng = 2 * np.pi * j / slices
+                x = np.cos(lng)
+                y = np.sin(lng)
+                glNormal3f(x * r1 / radius, z1 / radius, y * r1 / radius)
+                glVertex3f(x * r1, z1, y * r1)
+                glNormal3f(x * r0 / radius, z0 / radius, y * r0 / radius)
+                glVertex3f(x * r0, z0, y * r0)
+            glEnd()
 
     def handle_events(self):
         """处理窗口事件"""
