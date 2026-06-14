@@ -1,9 +1,19 @@
 # -*- coding: utf-8 -*-
 import time
 import numpy as np
-from typing import Optional
+from typing import Optional, List, Dict, Tuple
 
 from core import BaseDroneController, ConfigManager, Logger
+
+
+class WaypointMarker:
+    """航点标记"""
+    def __init__(self, position: np.ndarray, mode: str, label: str = ""):
+        self.timestamp = time.time()
+        self.position = position.copy()
+        self.mode = mode
+        self.label = label  # 航点标签，如 "起飞点"、"转弯点"、"降落点"
+        self.index = 0  # 航点序号
 
 
 class SimulationDroneController(BaseDroneController):
@@ -45,10 +55,13 @@ class SimulationDroneController(BaseDroneController):
             self.simulation_mode = True
 
     def connect(self) -> bool:
+        """连接无人机"""
         if not self.simulation_mode:
             self._connect_to_real_drone()
         else:
-            self._simulate_command(command, intensity)
+            self.connected = True
+            self.logger.info("仿真无人机: 已连接")
+        return self.connected
 
     def _simulate_command(self, command, intensity):
         """仿真模式命令处理"""
@@ -78,6 +91,8 @@ class SimulationDroneController(BaseDroneController):
             self._hover_simulation()
         elif command == "stop":
             self._stop_simulation()
+        elif command == "return_home":
+            self.return_home()
         else:
             self._simulate_takeoff(altitude)
 
@@ -174,71 +189,75 @@ class SimulationDroneController(BaseDroneController):
 
         print(f"[OK] 仿真：无人机{direction}，速度{rotation_speed:.1f}度/秒")
 
-    def _rotate_simulation(self, direction, intensity):
-        """仿真旋转"""
-        if not self.state['armed']:
-            print("[ERROR] 警告：无人机未解锁，无法旋转")
-            print("   请先做出'张开手掌'手势进行起飞解锁")
-            return
-
-        rotation_speed = 30.0 * intensity  # 度/秒
-
-        if direction == 'yaw_left':
-            self.state['orientation'][2] += rotation_speed  # yaw左转
-            self.state['mode'] = 'YAW_LEFT'
-        elif direction == 'yaw_right':
-            self.state['orientation'][2] -= rotation_speed  # yaw右转
-            self.state['mode'] = 'YAW_RIGHT'
-
-        # 保持位置不变
-        self.state['velocity'] = np.array([0.0, 0.0, 0.0])
-
-        print(f"[OK] 仿真：无人机{direction}，速度{rotation_speed:.1f}度/秒")
-
     def _hover_simulation(self):
         """仿真悬停"""
-        if self.state['armed']:
-            self.state['position'] += self.state['velocity'] * dt
-
-            if self.state['mode'] == 'TAKEOFF':
-                target_height = self.config.get("drone.takeoff_altitude", 2.0)
-                if self.state['position'][1] >= target_height:
-                    self.state['velocity'][1] = 0.0
-                    self.state['mode'] = 'HOVER'
-                    self.logger.info("仿真: 无人机已达到目标高度，开始悬停")
-
-            elif self.state['mode'] == 'LAND' and self.state['position'][1] <= 0.1:
-                self.state['position'][1] = 0.0
-                self.state['velocity'][1] = 0.0
-                self.state['armed'] = False
-                self.state['mode'] = 'LANDED'
-                self.logger.info("仿真: 无人机已降落")
-
-            if self.state['position'][1] < 0:
-                self.state['position'][1] = 0
-                self.state['velocity'][1] = max(self.state['velocity'][1], 0)
-
-            max_altitude = self.config.get("drone.max_altitude", 10.0)
-            if self.state['position'][1] > max_altitude:
-                self.state['position'][1] = max_altitude
-                self.state['velocity'][1] = min(self.state['velocity'][1], 0)
-
-            self._record_trajectory()
-
-            drain_rate = self.config.get("drone.battery_drain_rate", 0.01)
-            if self.state['battery'] > 0:
-                battery_drain = drain_rate * dt * 60
-                if np.linalg.norm(self.state['velocity']) > 0.1:
-                    battery_drain *= 1.5
-                self.state['battery'] -= battery_drain
-
-                if self.state['battery'] < 0:
-                    self.state['battery'] = 0
-                    self._emergency_land()
+        self.state['velocity'] = np.array([0.0, 0.0, 0.0])
+        self.state['mode'] = 'HOVER'
+        self.logger.info("仿真: 无人机悬停")
 
     def _emergency_land(self):
         self.logger.warning("警告: 电池耗尽，紧急降落！")
         self._simulate_land()
+
+    def return_home(self):
+        """一键紧急返航 - 立即飞回起飞点 (0, 0, 0) 并自动降落
+        
+        功能：
+        1. 如果无人机未解锁，直接重置（已经在原点）
+        2. 计算当前位置到原点的方向向量
+        3. 以最大速度的1.5倍飞向原点（紧急速度）
+        4. 到达原点附近后自动降落
+        5. 返航期间忽略其他移动命令
+        """
+        if not self.connected:
+            self.logger.error("[返航] 未连接，无法返航")
+            return False
+
+        current_pos = self.state['position']
+        home_pos = np.array([0.0, 0.0, 0.0])
+
+        # 计算到原点的距离
+        distance = np.linalg.norm(current_pos - home_pos)
+
+        if distance < 0.3:
+            # 已经在原点附近，直接降落
+            self.logger.info("[返航] 无人机已在原点附近，直接降落")
+            if self.state['armed']:
+                self.state['mode'] = 'RETURN_HOME'
+                self._simulate_land()
+            else:
+                self.reset()
+            return True
+
+        # 计算返航方向向量
+        direction = home_pos - current_pos
+        direction_norm = direction / distance
+
+        # 紧急返航速度（最大速度的1.5倍）
+        max_speed = self.config.get("drone.max_speed", 2.0) if self.config else 2.0
+        return_speed = max_speed * 1.5
+
+        # 设置速度向量指向原点
+        self.state['velocity'] = direction_norm * return_speed
+        self.state['mode'] = 'RETURN_HOME'
+
+        # 记录返航起点，用于后续判断是否到达
+        self._return_home_start_pos = current_pos.copy()
+        self._return_home_active = True
+
+        self.logger.info(f"[返航] 紧急返航启动！")
+        self.logger.info(f"  当前位置: ({current_pos[0]:.2f}, {current_pos[1]:.2f}, {current_pos[2]:.2f})")
+        self.logger.info(f"  目标位置: (0.00, 0.00, 0.00)")
+        self.logger.info(f"  距离: {distance:.2f}m | 返航速度: {return_speed:.2f}m/s")
+        self.logger.info(f"  预计到达: {distance / return_speed:.1f}秒")
+        print(f"\n{'='*60}")
+        print(f"  ⚠️  紧急返航已启动！")
+        print(f"  无人机正在全速返回起飞点...")
+        print(f"  当前位置: ({current_pos[0]:.2f}, {current_pos[1]:.2f}, {current_pos[2]:.2f})")
+        print(f"  距原点: {distance:.2f}m")
+        print(f"{'='*60}\n")
+
+        return True
 
     def _send_mavlink_takeoff(self):
         try:
